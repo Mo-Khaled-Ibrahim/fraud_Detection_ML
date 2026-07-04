@@ -1,0 +1,150 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # 01: Exploratory Data Analysis (EDA)
+# MAGIC
+# MAGIC This notebook performs exploratory data analysis on the fraud detection dataset.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Setup
+
+# COMMAND ----------
+
+# MAGIC %pip install --upgrade matplotlib
+# MAGIC
+# MAGIC import os
+# MAGIC import pandas as pd
+# MAGIC import numpy as np
+# MAGIC import matplotlib.pyplot as plt
+# MAGIC import seaborn as sns
+# MAGIC
+# MAGIC from pyspark.sql import SparkSession
+# MAGIC import pyspark.sql.functions as F
+# MAGIC from pyspark.sql.types import *
+# MAGIC
+# MAGIC # Set matplotlib style
+# MAGIC plt.style.use('seaborn-v0_8-whitegrid')
+# MAGIC sns.set_palette('viridis')
+
+# COMMAND ----------
+
+# Initialize Spark session
+spark = SparkSession.builder \
+    .appName("FraudDetectionEDA") \
+    .config("spark.sql.shuffle.partitions", "8") \
+    .getOrCreate()
+
+print(f"Spark version: {spark.version}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Load Data
+
+# COMMAND ----------
+
+# DBTITLE 1,Cell 6
+# Define data path
+data_path = "/Workspace/Users/mohamed.c.elshenity@gmail.com/fraud/parquet"
+
+# Load data
+df = spark.read.parquet(data_path)
+
+# Show basic info
+print(f"Total records: {df.count():,}")
+print(f"Total columns: {len(df.columns)}")
+df.printSchema()
+
+# COMMAND ----------
+
+# Show sample data
+df.show(5, truncate=False)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Label Distribution
+
+# COMMAND ----------
+
+# Convert is_fraud to integer
+df = df.withColumn("is_fraud", F.col("is_fraud").cast("integer"))
+
+# Calculate label distribution
+label_dist = df.groupBy("is_fraud").count().toPandas()
+label_dist["percentage"] = (label_dist["count"] / df.count()) * 100
+
+print("Label Distribution:")
+print(label_dist.to_string(index=False))
+
+# Plot
+plt.figure(figsize=(8, 5))
+sns.barplot(data=label_dist, x="is_fraud", y="count", hue="is_fraud", legend=False)
+plt.title("Transaction Label Distribution")
+plt.xlabel("Is Fraud? (0=Legitimate, 1=Fraud)")
+plt.ylabel("Number of Transactions")
+plt.tight_layout()
+plt.show()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Amount Distribution
+
+# COMMAND ----------
+
+# Convert amount to double
+df = df.withColumn("amt", F.col("amt").cast("double"))
+
+# Sample data for plotting
+sample_df = df.select("amt", "is_fraud").sample(fraction=0.1, seed=42).toPandas()
+
+# Plot distribution by label
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+sns.histplot(data=sample_df[sample_df["is_fraud"] == 0], x="amt", bins=50, kde=True)
+plt.title("Legitimate Transaction Amounts")
+plt.xlabel("Amount ($)")
+
+plt.subplot(1, 2, 2)
+sns.histplot(data=sample_df[sample_df["is_fraud"] == 1], x="amt", bins=50, kde=True, color="red")
+plt.title("Fraudulent Transaction Amounts")
+plt.xlabel("Amount ($)")
+
+plt.tight_layout()
+plt.show()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Category Analysis
+
+# COMMAND ----------
+
+# Fraud rate by category
+category_stats = df.groupBy("category").agg(
+    F.count("*").alias("total_txn"),
+    F.avg("is_fraud").alias("fraud_rate")
+).orderBy(F.desc("fraud_rate")).toPandas()
+
+print("Top 10 Categories by Fraud Rate:")
+print(category_stats.head(10).to_string(index=False))
+
+# Plot
+plt.figure(figsize=(12, 8))
+sns.barplot(data=category_stats, y="category", x="fraud_rate", orient="h")
+plt.title("Fraud Rate by Transaction Category")
+plt.xlabel("Fraud Rate")
+plt.tight_layout()
+plt.show()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Stop Spark Session
+
+# COMMAND ----------
+
+spark.stop()
